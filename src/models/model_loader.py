@@ -5,6 +5,7 @@ Model loader module for loading pretrained models from Hugging Face.
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel
 import torch
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ModelLoader:
     """Load and manage pretrained transformer models."""
 
-    def __init__(self, model_name: str = "gpt2", device: str = None):
+    def __init__(self, model_name: str = "gpt2", device: Optional[str] = None):
         """
         Initialize the model loader.
 
