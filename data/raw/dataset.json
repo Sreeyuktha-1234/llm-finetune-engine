@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "description": "Sample dataset for LLM fine-tuning",
+    "num_samples": 5,
+    "created_date": "2026-05-21"
+  },
+  "data": [
+    {
+      "id": 1,
+      "text": "Artificial intelligence is transforming industries by automating tasks and improving decision-making processes. Machine learning models are becoming increasingly sophisticated and capable of handling complex problems.",
+      "category": "technology",
+      "length": 178
+    },
+    {
+      "id": 2,
+      "text": "Climate change is one of the most pressing challenges facing humanity. Rising global temperatures are causing melting glaciers, rising sea levels, and increased frequency of extreme weather events.",
+      "category": "environment",
+      "length": 175
+    },
+    {
+      "id": 3,
+      "text": "The human brain contains approximately 86 billion neurons, each connected to thousands of other neurons. This complex network enables memory, learning, and consciousness.",
+      "category": "science",
+      "length": 162
+    },
+    {
+      "id": 4,
+      "text": "Digital transformation is reshaping how businesses operate and compete in the modern market. Companies are investing heavily in cloud computing, data analytics, and cybersecurity infrastructure.",
+      "category": "business",
+      "length": 167
+    },
+    {
+      "id": 5,
+      "text": "Renewable energy sources like solar and wind power are becoming more affordable and efficient. These sustainable alternatives are crucial for reducing carbon emissions and combating climate change.",
+      "category": "energy",
+      "length": 168
+    }
+  ],
+  "splits": {
+    "train": [1, 2, 3],
+    "validation": [4],
+    "test": [5]
+  }
+}
