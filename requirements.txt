@@ -1,2 +1,5 @@
 torch
 transformers
+accelerate
+peft
+bitsandbytes
