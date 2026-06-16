@@ -10,6 +10,7 @@ from typing import Dict, List
 from pathlib import Path
 
 from src.tokenizers.tokenizer_manager import TokenizerManager
+from data.loaders.formatter import format_instruction_sample, is_instruction_sample
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +108,16 @@ class DataPreprocessor:
         processed_samples = []
         
         for sample in data.get('data', []):
+            text = sample.get('text', '')
+            if not text and is_instruction_sample(sample):
+                text = format_instruction_sample(sample)
+
             processed_sample = {
                 'id': sample.get('id'),
-                'text': self.clean_text(sample.get('text', '')),
+                'text': self.clean_text(text),
                 'category': sample.get('category', 'unknown'),
                 'original_length': sample.get('length', 0),
-                'processed_length': len(self.clean_text(sample.get('text', '')).split()),
+                'processed_length': len(self.clean_text(text).split()),
             }
             processed_samples.append(processed_sample)
         

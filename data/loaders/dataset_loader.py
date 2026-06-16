@@ -8,6 +8,8 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from data.loaders.formatter import format_instruction_sample, is_instruction_sample
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +71,7 @@ class DatasetLoader:
                 self.data_path,
             )
 
+        samples = self._normalize_samples(samples)
         self._samples = samples
         return samples
 
@@ -164,3 +167,18 @@ class DatasetLoader:
         """Raise RuntimeError if load() has not been called."""
         if self._samples is None:
             raise RuntimeError("Call load() before accessing dataset contents.")
+
+    def _normalize_samples(self, samples: List[Dict]) -> List[Dict]:
+        """
+        Ensure each sample has a text field for downstream tokenization/training.
+
+        If a sample uses instruction-format keys (instruction/input/output), build
+        the SFT text template and store it in sample['text'].
+        """
+        normalized: List[Dict] = []
+        for sample in samples:
+            sample_copy = dict(sample)
+            if "text" not in sample_copy and is_instruction_sample(sample_copy):
+                sample_copy["text"] = format_instruction_sample(sample_copy)
+            normalized.append(sample_copy)
+        return normalized
