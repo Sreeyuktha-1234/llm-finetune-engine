@@ -14,6 +14,21 @@ Supported modes:
 - `lora`: Parameter-efficient LoRA fine-tuning.
 - `qlora`: 4-bit quantized QLoRA fine-tuning.
 
+### Output structure
+
+By default, each run automatically creates a new experiment folder:
+
+```text
+outputs/
+└── experiment_001/
+	├── checkpoints/
+	├── logs/
+	└── metrics/
+```
+
+The next runs increment the experiment number (`experiment_002`, `experiment_003`, ...).
+Use `--experiment-name` to force a specific folder name, or `--output-dir` to bypass this behavior.
+
 Examples:
 
 ```bash
@@ -50,4 +65,6 @@ Key arguments:
 - `--train-split`: Dataset split for training.
 - `--eval-split`: Dataset split for validation.
 - `--output-dir`: Optional override for checkpoint output directory.
+- `--outputs-root`: Root folder where `experiment_*` directories are created.
+- `--experiment-name`: Optional explicit experiment directory name.
 - `--log-level`: Logging level (for example `INFO` or `DEBUG`).

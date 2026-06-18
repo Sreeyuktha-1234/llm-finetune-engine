@@ -23,6 +23,7 @@ if str(ROOT_DIR) not in sys.path:
 
 
 from data.loaders.dataset_loader import DatasetLoader
+from src.utils.experiment import create_experiment_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,16 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--model-name", default="gpt2", help="Model identifier")
     parser.add_argument("--output-dir", default=None, help="Output directory override")
+    parser.add_argument(
+        "--outputs-root",
+        default="outputs",
+        help="Root directory where experiment_* folders are created",
+    )
+    parser.add_argument(
+        "--experiment-name",
+        default=None,
+        help="Optional experiment folder name (for example: experiment_001)",
+    )
 
     parser.add_argument("--num-epochs", type=int, default=3, help="Number of epochs")
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
@@ -96,7 +107,18 @@ def run_full_training(args: argparse.Namespace, train_texts: List[str], eval_tex
     """Run standard full fine-tuning."""
     from src.training.trainer import Trainer
 
-    output_dir = args.output_dir or "outputs/checkpoints"
+    output_dir = args.output_dir
+    if not output_dir:
+        experiment_dirs = create_experiment_dirs(
+            outputs_root=args.outputs_root,
+            experiment_name=args.experiment_name,
+        )
+        output_dir = str(experiment_dirs["checkpoints_dir"])
+        logger.info(
+            "Created experiment folder '%s' with checkpoints/logs/metrics at %s",
+            experiment_dirs["experiment_name"],
+            experiment_dirs["experiment_dir"],
+        )
 
     trainer = Trainer(
         model_name=args.model_name,
@@ -117,7 +139,18 @@ def run_lora_training(args: argparse.Namespace, train_texts: List[str], eval_tex
     """Run LoRA fine-tuning."""
     from src.training.lora_trainer import LoRATrainer, LoRATrainingArguments
 
-    output_dir = args.output_dir or "outputs/lora_checkpoints"
+    output_dir = args.output_dir
+    if not output_dir:
+        experiment_dirs = create_experiment_dirs(
+            outputs_root=args.outputs_root,
+            experiment_name=args.experiment_name,
+        )
+        output_dir = str(experiment_dirs["checkpoints_dir"])
+        logger.info(
+            "Created experiment folder '%s' with checkpoints/logs/metrics at %s",
+            experiment_dirs["experiment_name"],
+            experiment_dirs["experiment_dir"],
+        )
 
     lora_args = LoRATrainingArguments(
         model_name=args.model_name,
@@ -157,7 +190,18 @@ def run_qlora_training(args: argparse.Namespace, train_texts: List[str], eval_te
     QLoRATrainer = qlora_module.QLoRATrainer
     QLoRATrainingArguments = qlora_module.QLoRATrainingArguments
 
-    output_dir = args.output_dir or "outputs/qlora_checkpoints"
+    output_dir = args.output_dir
+    if not output_dir:
+        experiment_dirs = create_experiment_dirs(
+            outputs_root=args.outputs_root,
+            experiment_name=args.experiment_name,
+        )
+        output_dir = str(experiment_dirs["checkpoints_dir"])
+        logger.info(
+            "Created experiment folder '%s' with checkpoints/logs/metrics at %s",
+            experiment_dirs["experiment_name"],
+            experiment_dirs["experiment_dir"],
+        )
 
     qlora_args = QLoRATrainingArguments(
         model_name=args.model_name,
