@@ -23,8 +23,11 @@ from transformers import (
 )
 
 from src.models.model_loader import ModelLoader
+from src.utils.logger import setup_logger, get_logger
+from src.utils.checkpoint_manager import CheckpointManager
+from src.training.data_collator import CausalLMDataCollator
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +79,7 @@ class Trainer:
         warmup_steps: int = 0,
         save_every_n_epochs: int = 1,
         device: Optional[str] = None,
+        log_file: Optional[str] = None,
     ):
         """
         Initialize the trainer.
@@ -106,6 +110,7 @@ class Trainer:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        setup_logger(__name__, log_file=log_file)
 
         # Components initialised in setup()
         self.model: Optional[PreTrainedModel] = None
@@ -116,6 +121,7 @@ class Trainer:
         # Metrics history
         self.train_losses: List[float] = []
         self.eval_losses: List[float] = []
+        self.global_step: int = 0
 
         logger.info(
             "Trainer created | model=%s device=%s epochs=%d lr=%g wd=%g",
@@ -231,7 +237,8 @@ class Trainer:
         """Tokenize texts and return a DataLoader."""
         assert self.tokenizer is not None, "Call setup() before building a dataloader."
         dataset = TextDataset(texts, self.tokenizer, max_length=self.max_length)
-        return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle)
+        collator = CausalLMDataCollator(tokenizer=self.tokenizer)
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle, collate_fn=collator)
 
     def _init_scheduler(self, total_steps: int) -> None:
         """Create a linear warmup scheduler once total steps are known."""
@@ -262,8 +269,9 @@ class Trainer:
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
+                labels=batch["labels"].to(self.device),
             )
-            loss = self.compute_loss(input_ids, attention_mask, outputs.logits)
+            loss = outputs.loss
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -273,6 +281,7 @@ class Trainer:
                 self.scheduler.step()
 
             total_loss += loss.item()
+            self.global_step += 1
 
         return total_loss / max(len(dataloader), 1)
 
@@ -290,10 +299,9 @@ class Trainer:
                 outputs = self.model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
+                    labels=batch["labels"].to(self.device),
                 )
-                total_loss += self.compute_loss(
-                    input_ids, attention_mask, outputs.logits
-                ).item()
+                total_loss += outputs.loss.item()
 
         return total_loss / max(len(dataloader), 1)
 
@@ -305,33 +313,32 @@ class Trainer:
         """Save model + tokenizer checkpoint for the given epoch."""
         assert self.model is not None and self.tokenizer is not None, \
             "Call setup() before saving a checkpoint."
-        checkpoint_dir = self.output_dir / f"checkpoint-epoch-{epoch}"
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-        self.model.save_pretrained(str(checkpoint_dir))
-        self.tokenizer.save_pretrained(str(checkpoint_dir))
-
-        # Persist metrics alongside weights
-        metrics_path = checkpoint_dir / "metrics.json"
-        with open(metrics_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {"train_losses": self.train_losses, "eval_losses": self.eval_losses},
-                f,
-                indent=2,
-            )
-
-        logger.info("Checkpoint saved → %s", checkpoint_dir)
+        CheckpointManager.save_checkpoint(
+            output_dir=self.output_dir,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            epoch=epoch,
+            global_step=self.global_step,
+            metrics={"train_losses": self.train_losses, "eval_losses": self.eval_losses},
+            tokenizer=self.tokenizer,
+        )
 
     def save_final_model(self) -> None:
         """Save the final fine-tuned model and tokenizer."""
         assert self.model is not None and self.tokenizer is not None, \
             "Call setup() before saving the final model."
-        final_dir = self.output_dir / "final"
-        final_dir.mkdir(parents=True, exist_ok=True)
-
-        self.model.save_pretrained(str(final_dir))
-        self.tokenizer.save_pretrained(str(final_dir))
-        logger.info("Final model saved → %s", final_dir)
+        CheckpointManager.save_checkpoint(
+            output_dir=self.output_dir,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            epoch=self.num_epochs,
+            global_step=self.global_step,
+            metrics={"train_losses": self.train_losses, "eval_losses": self.eval_losses},
+            tokenizer=self.tokenizer,
+            metadata={"type": "final"},
+        )
 
     # ------------------------------------------------------------------
     # Public training entry-point

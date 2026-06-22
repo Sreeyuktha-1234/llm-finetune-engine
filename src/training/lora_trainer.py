@@ -22,7 +22,11 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-logger = logging.getLogger(__name__)
+from src.utils.logger import setup_logger, get_logger
+from src.utils.checkpoint_manager import CheckpointManager
+from src.training.data_collator import CausalLMDataCollator
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -98,16 +102,18 @@ class TextDataset(Dataset):
 class LoRATrainer:
     """Fine-tune a causal language model using LoRA adapters."""
 
-    def __init__(self, args: LoRATrainingArguments):
+    def __init__(self, args: LoRATrainingArguments, log_file: Optional[str] = None):
         """
         Initialize the LoRA trainer.
 
         Args:
             args: LoRATrainingArguments containing all configuration.
+            log_file: Optional path for file-based logging.
         """
         self.args = args
         self.output_dir = Path(args.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        setup_logger(__name__, log_file=log_file)
         
         # Initialize accelerator
         self.accelerator = Accelerator()
@@ -169,10 +175,12 @@ class LoRATrainer:
             DataLoader for the dataset.
         """
         dataset = TextDataset(texts, self.tokenizer, self.args.max_length)
+        collator = CausalLMDataCollator(tokenizer=self.tokenizer)
         dataloader = DataLoader(
             dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
+            collate_fn=collator,
         )
         return dataloader
 
@@ -240,7 +248,7 @@ class LoRATrainer:
                 outputs = self.model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch.get("attention_mask"),
-                    labels=batch["input_ids"],
+                    labels=batch["labels"],
                 )
                 loss = outputs.loss
                 
@@ -292,7 +300,7 @@ class LoRATrainer:
                 outputs = self.model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch.get("attention_mask"),
-                    labels=batch["input_ids"],
+                    labels=batch["labels"],
                 )
                 loss = outputs.loss
                 total_loss += loss.detach().item()
@@ -307,29 +315,18 @@ class LoRATrainer:
         Args:
             epoch: Optional epoch number to include in checkpoint name.
         """
-        if epoch is not None:
-            save_dir = self.output_dir / f"checkpoint-epoch-{epoch}"
-        else:
-            save_dir = self.output_dir / "final_model"
-        
-        save_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Save using accelerator to handle distributed training
         self.accelerator.wait_for_everyone()
-        
-        # Save LoRA adapters
         unwrapped_model = self.accelerator.unwrap_model(self.model)
-        unwrapped_model.save_pretrained(save_dir)
-        
-        # Save tokenizer
-        self.tokenizer.save_pretrained(save_dir)
-        
-        # Save training config
-        config_path = save_dir / "training_config.json"
-        with open(config_path, "w") as f:
-            json.dump(self.args.__dict__, f, indent=2)
-        
-        logger.info(f"Model saved to {save_dir}")
+        CheckpointManager.save_checkpoint(
+            output_dir=self.output_dir,
+            model=unwrapped_model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            epoch=epoch if epoch is not None else self.args.num_epochs,
+            global_step=self.global_step,
+            tokenizer=self.tokenizer,
+            metadata={"training_config": self.args.__dict__},
+        )
 
     def load_adapter(self, adapter_path: str):
         """

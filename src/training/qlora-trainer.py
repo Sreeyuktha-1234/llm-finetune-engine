@@ -24,7 +24,11 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-logger = logging.getLogger(__name__)
+from src.utils.logger import setup_logger, get_logger
+from src.utils.checkpoint_manager import CheckpointManager
+from src.training.data_collator import CausalLMDataCollator
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -167,16 +171,18 @@ class QLoRATrainer:
     - Only LoRA adapter parameters are trained in fp32 (compute dtype = bfloat16).
     """
 
-    def __init__(self, args: QLoRATrainingArguments):
+    def __init__(self, args: QLoRATrainingArguments, log_file: Optional[str] = None):
         """
         Initialize the QLoRA trainer.
 
         Args:
             args: QLoRATrainingArguments containing all configuration.
+            log_file: Optional path for file-based logging.
         """
         self.args = args
         self.output_dir = Path(args.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        setup_logger(__name__, log_file=log_file)
 
         # Initialize accelerator
         self.accelerator = Accelerator(
@@ -275,7 +281,8 @@ class QLoRATrainer:
             DataLoader ready for training.
         """
         dataset = TextDataset(texts, self.tokenizer, self.args.max_length)
-        return DataLoader(dataset, batch_size=self.args.batch_size, shuffle=True)
+        collator = CausalLMDataCollator(tokenizer=self.tokenizer)
+        return DataLoader(dataset, batch_size=self.args.batch_size, shuffle=True, collate_fn=collator)
 
     # ------------------------------------------------------------------
     # Optimizer / Scheduler
@@ -353,7 +360,7 @@ class QLoRATrainer:
                     outputs = self.model(
                         input_ids=batch["input_ids"],
                         attention_mask=batch.get("attention_mask"),
-                        labels=batch["input_ids"],
+                        labels=batch["labels"],
                     )
                     loss = outputs.loss
                     self.accelerator.backward(loss)
@@ -407,7 +414,7 @@ class QLoRATrainer:
                 outputs = self.model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch.get("attention_mask"),
-                    labels=batch["input_ids"],
+                    labels=batch["labels"],
                 )
                 total_loss += outputs.loss.detach().float().item()
 
@@ -425,23 +432,18 @@ class QLoRATrainer:
         Args:
             epoch: Epoch number to include in the checkpoint directory name.
         """
-        save_dir = (
-            self.output_dir / f"checkpoint-epoch-{epoch}"
-            if epoch is not None
-            else self.output_dir / "final_model"
-        )
-        save_dir.mkdir(parents=True, exist_ok=True)
-
         self.accelerator.wait_for_everyone()
         unwrapped_model = self.accelerator.unwrap_model(self.model)
-        unwrapped_model.save_pretrained(save_dir)
-        self.tokenizer.save_pretrained(save_dir)
-
-        config_path = save_dir / "training_config.json"
-        with open(config_path, "w") as f:
-            json.dump(self.args.__dict__, f, indent=2, default=str)
-
-        logger.info(f"Model checkpoint saved to {save_dir}")
+        CheckpointManager.save_checkpoint(
+            output_dir=self.output_dir,
+            model=unwrapped_model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            epoch=epoch if epoch is not None else self.args.num_epochs,
+            global_step=self.global_step,
+            tokenizer=self.tokenizer,
+            metadata={"training_config": self.args.__dict__},
+        )
 
     def load_adapter(self, adapter_path: str):
         """
