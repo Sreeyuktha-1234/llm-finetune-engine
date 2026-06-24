@@ -3,3 +3,5 @@ transformers
 accelerate
 peft
 bitsandbytes
+wandb
+pynvml
