@@ -122,6 +122,8 @@ class Trainer:
         self.train_losses: List[float] = []
         self.eval_losses: List[float] = []
         self.global_step: int = 0
+        self.best_metric: float = float("inf")
+        self.best_epoch: Optional[int] = None
 
         logger.info(
             "Trainer created | model=%s device=%s epochs=%d lr=%g wd=%g",
@@ -340,6 +342,27 @@ class Trainer:
             metadata={"type": "final"},
         )
 
+    def save_best_model(self, epoch: int, metric: float) -> None:
+        """Save a checkpoint tagged as the current best model."""
+        assert self.model is not None and self.tokenizer is not None, \
+            "Call setup() before saving the best model."
+        CheckpointManager.save_checkpoint(
+            output_dir=self.output_dir,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            epoch=epoch,
+            global_step=self.global_step,
+            metrics={
+                "train_losses": self.train_losses,
+                "eval_losses": self.eval_losses,
+                "best_metric": metric,
+                "best_epoch": epoch,
+            },
+            tokenizer=self.tokenizer,
+            metadata={"type": "best", "best_metric": metric},
+        )
+
     # ------------------------------------------------------------------
     # Public training entry-point
     # ------------------------------------------------------------------
@@ -393,6 +416,17 @@ class Trainer:
                 logger.info(
                     "Epoch %d/%d | train_loss=%.4f",
                     epoch, self.num_epochs, train_loss,
+                )
+
+            metric = eval_loss if eval_loss is not None else train_loss
+            if metric < self.best_metric:
+                self.best_metric = metric
+                self.best_epoch = epoch
+                self.save_best_model(epoch, metric)
+                logger.info(
+                    "Best model updated | epoch=%d metric=%.4f",
+                    epoch,
+                    metric,
                 )
 
             if epoch % self.save_every_n_epochs == 0:

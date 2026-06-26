@@ -237,6 +237,8 @@ class QLoRATrainer:
         self.optimizer: Optional[AdamW] = None
         self.scheduler = None
         self.global_step = 0
+        self.best_metric = float("inf")
+        self.best_epoch: Optional[int] = None
 
         logger.info("QLoRA Trainer initialized successfully")
 
@@ -385,9 +387,19 @@ class QLoRATrainer:
                 f"Epoch {epoch + 1} completed. Average loss: {avg_epoch_loss:.4f}"
             )
 
+            val_loss: Optional[float] = None
             if val_dataloader is not None:
                 val_loss = self._validate(val_dataloader)
                 logger.info(f"Validation loss: {val_loss:.4f}")
+
+            metric = val_loss if val_loss is not None else avg_epoch_loss
+            if metric < self.best_metric:
+                self.best_metric = metric
+                self.best_epoch = epoch + 1
+                self.save_model(epoch + 1, is_best=True, best_metric=metric)
+                logger.info(
+                    f"Best model updated at epoch {epoch + 1} with metric {metric:.4f}"
+                )
 
             if (epoch + 1) % self.args.save_every_n_epochs == 0:
                 self.save_model(epoch + 1)
@@ -425,7 +437,12 @@ class QLoRATrainer:
     # Saving / Loading
     # ------------------------------------------------------------------
 
-    def save_model(self, epoch: Optional[int] = None):
+    def save_model(
+        self,
+        epoch: Optional[int] = None,
+        is_best: bool = False,
+        best_metric: Optional[float] = None,
+    ):
         """
         Save LoRA adapters, tokenizer, and training config.
 
@@ -442,7 +459,11 @@ class QLoRATrainer:
             epoch=epoch if epoch is not None else self.args.num_epochs,
             global_step=self.global_step,
             tokenizer=self.tokenizer,
-            metadata={"training_config": self.args.__dict__},
+            metadata={
+                "training_config": self.args.__dict__,
+                "type": "best" if is_best else "checkpoint",
+                "best_metric": best_metric,
+            },
         )
 
     def load_adapter(self, adapter_path: str):
