@@ -15,7 +15,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 import torch
 from peft import PeftModel, PeftConfig
@@ -67,8 +67,8 @@ class ExportConfig:
                             when ``adapter_type="qlora"``.
     """
 
-    base_model_name: str
     adapter_path: str
+    base_model_name: Optional[str] = None
     output_dir: str = "outputs/exported"
     export_mode: ExportMode = "adapter-only"
     adapter_type: Literal["lora", "qlora"] = "lora"
@@ -84,6 +84,51 @@ class ExportConfig:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _resolve_base_model_name(cfg: ExportConfig) -> str:
+    """
+    Resolve the base model name for merge/export operations.
+
+    Priority:
+      1) Explicit ``cfg.base_model_name``
+      2) ``base_model_name_or_path`` stored in adapter's ``adapter_config.json``
+
+    Args:
+        cfg: Active :class:`ExportConfig`.
+
+    Returns:
+        Resolved base model identifier/path.
+    """
+    if cfg.base_model_name:
+        return cfg.base_model_name
+
+    peft_cfg = PeftConfig.from_pretrained(cfg.adapter_path)
+    inferred_base = getattr(peft_cfg, "base_model_name_or_path", None)
+    if not inferred_base:
+        raise ValueError(
+            "Unable to infer base model from adapter config. "
+            "Set 'base_model_name' in ExportConfig explicitly."
+        )
+
+    logger.info(
+        "Resolved base model from adapter config: '%s'.", inferred_base
+    )
+    return inferred_base
+
+
+def _merge_adapter_into_base(cfg: ExportConfig) -> AutoModelForCausalLM:
+    """
+    Load base model and merge adapter weights into it.
+
+    Args:
+        cfg: Active :class:`ExportConfig`.
+
+    Returns:
+        Plain ``AutoModelForCausalLM`` with merged adapter weights.
+    """
+    cfg.base_model_name = _resolve_base_model_name(cfg)
+    base_model = _load_base_model_for_merge(cfg)
+    return _attach_and_merge(base_model, cfg.adapter_path)
 
 def _load_base_model_for_merge(cfg: ExportConfig) -> AutoModelForCausalLM:
     """
@@ -220,8 +265,8 @@ def export_merged(cfg: ExportConfig) -> Path:
     output_path = Path(cfg.output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
 
-    base_model = _load_base_model_for_merge(cfg)
-    merged_model = _attach_and_merge(base_model, cfg.adapter_path)
+    base_model_name = _resolve_base_model_name(cfg)
+    merged_model = _merge_adapter_into_base(cfg)
 
     logger.info(
         "Saving merged model to '%s' (safe_serialization=%s).",
@@ -235,7 +280,7 @@ def export_merged(cfg: ExportConfig) -> Path:
 
     # Save tokenizer alongside the model
     tokenizer = AutoTokenizer.from_pretrained(
-        cfg.base_model_name, trust_remote_code=True
+        base_model_name, trust_remote_code=True
     )
     tokenizer.save_pretrained(str(output_path))
     logger.info("Tokenizer saved.")
@@ -243,7 +288,7 @@ def export_merged(cfg: ExportConfig) -> Path:
     manifest = {
         "export_mode": "merged",
         "adapter_type": cfg.adapter_type,
-        "base_model": cfg.base_model_name,
+        "base_model": base_model_name,
         "adapter_source": str(Path(cfg.adapter_path).resolve()),
         "output_dir": str(output_path),
         "safe_serialization": cfg.safe_serialization,
@@ -278,6 +323,7 @@ def export_gguf_ready(cfg: ExportConfig) -> Path:
     output_path = Path(cfg.output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
 
+    base_model_name = _resolve_base_model_name(cfg)
     base_model = _load_base_model_for_merge(cfg)
 
     # Cast to fp16 before merging to ensure clean weight dtype
@@ -290,14 +336,14 @@ def export_gguf_ready(cfg: ExportConfig) -> Path:
     merged_model.save_pretrained(str(output_path), safe_serialization=True)
 
     tokenizer = AutoTokenizer.from_pretrained(
-        cfg.base_model_name, trust_remote_code=True
+        base_model_name, trust_remote_code=True
     )
     tokenizer.save_pretrained(str(output_path))
 
     manifest = {
         "export_mode": "gguf-ready",
         "adapter_type": cfg.adapter_type,
-        "base_model": cfg.base_model_name,
+        "base_model": base_model_name,
         "adapter_source": str(Path(cfg.adapter_path).resolve()),
         "output_dir": str(output_path),
         "dtype": "float16",
@@ -375,6 +421,15 @@ class ExportPipeline:
             raise FileNotFoundError(
                 f"No 'adapter_config.json' found in '{adapter_path}'. "
                 "Ensure the adapter was saved with PeftModel.save_pretrained()."
+            )
+        has_adapter_weights = any(
+            (adapter_path / name).exists()
+            for name in ("adapter_model.safetensors", "adapter_model.bin")
+        )
+        if not has_adapter_weights:
+            raise FileNotFoundError(
+                f"No adapter weight file found in '{adapter_path}'. "
+                "Expected 'adapter_model.safetensors' or 'adapter_model.bin'."
             )
         if self.config.push_to_hub and not self.config.hub_repo_id:
             raise ValueError(
